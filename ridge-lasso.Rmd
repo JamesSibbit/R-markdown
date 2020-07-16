@@ -1,0 +1,174 @@
+---
+title: "Ridge & Lasso"
+output: html_notebook
+---
+
+Carry out ridge & Lasso regression.
+
+```{r}
+install.packages("glmnet")
+library(glmnet)
+```
+
+```{r}
+website <- "https://web.stanford.edu/~hastie/ElemStatLearn/datasets/prostate.data"
+prostate <- read.table(website, header=T)
+str(prostate)
+cor(prostate[,1:8])
+pairs(prostate[,1:9], col="blue")
+```
+
+```{r}
+train <- subset(prostate, train == TRUE)[,1:9]
+test <- subset(prostate, train == FALSE)[,1:9]
+?glmnet
+```
+
+Want to fit ridge and lasso regressions to data. In order to do so, need to supply numerical design matrix and responses, so need to convert all factors to numerical predictors. Use data.matrix to do so.
+
+```{r}
+X <- data.matrix(train[,1:8])
+Y <- train$lpsa
+prostate.ridge <- glmnet(X,Y, family = "gaussian", alpha=0, lambda.min.ratio = 1e-6, nlambda=1000)
+```
+
+glmnet solves whole seq of regression problems for different values of lambda. Starts at lambda_max such that regression coefficients are 0 for alpha = 0.001.
+
+```{r}
+plot(prostate.ridge, xvar="lambda", label=TRUE)
+```
+
+Can see that as more deviance is explained by model, model becomes more complicated.
+
+-------------------------
+
+X-Val
+
+```{r}
+set.seed(2018)
+prostate.cvridge <- cv.glmnet(X,Y, family = "gaussian",alpha=0, lambda=prostate.ridge$lambda,nfolds=10)
+prostate.cvridge$lambda.min
+plot(prostate.cvridge)
+```
+
+Red curve is avg X-val across K folds. Optimal lambda is first dotted line, second is larges value within 1 sd of optimal. 
+
+```{r}
+ind <- prostate.ridge$lambda == prostate.cvridge$lambda.min
+round(prostate.ridge$a0[ind], 3) #intercept
+round(prostate.ridge$beta[,ind], 3) #coefficients
+```
+
+Now want to check X-val value of lambda against the one that minimises test error
+
+```{r}
+# Find MSE for og model
+Yhat <- predict(prostate.ridge, X)
+train_err <- colMeans((Y-Yhat)^2)
+# Find MSE for new model
+X_new <- data.matrix(test[,1:8])
+Y_new <- test$lpsa
+Y_newhat <- predict(prostate.ridge, X_new)
+test_err <- colMeans((Y_new-Y_newhat)^2)
+# Compare
+plot(log(prostate.ridge$lambda), train_err, col="orange", type="l",ylab="err", xlab="log(lambda)")
+points(log(prostate.ridge$lambda), test_err, col="blue", type="l")
+abline(v=log(prostate.cvridge$lambda.min), lty=3)
+abline(v=log(prostate.cvridge$lambda.1se), lty=4)
+legend("topleft", c("training error","test error"),lty=1, col=c("orange","blue"))
+```
+
+Redo with lasso regression.
+
+```{r}
+prostate.lasso <- glmnet(X,Y, family = "gaussian", alpha=1, lambda.min.ratio = 1e-6, nlambda=1000)
+plot(prostate.lasso, xvar="dev", label=TRUE)
+```
+
+Much more sparse as expected. Now find optimal lambda.
+
+```{r}
+prostate.cvlasso <- cv.glmnet(X,Y, family = "gaussian",alpha=0, lambda=prostate.lasso$lambda,nfolds=10)
+prostate.cvlasso$lambda.min # optimal regularisation parameter
+plot(prostate.cvlasso)
+```
+
+Find model coeffs
+
+```{r}
+ind_two <- prostate.lasso$lambda == prostate.cvlasso$lambda.min
+round(prostate.lasso$a0[ind_two], 3)
+round(prostate.lasso$beta[,ind_two], 3)
+```
+
+------------------
+
+GWAS Data
+
+```{r}
+filePath <- "https://raw.githubusercontent.com/AJCoca/SLP19/master/"
+fileName <- "gwas.txt"
+gwas <- read.table(paste0(filePath, fileName), header=TRUE)
+dim(gwas)
+gwas[1:10,1:10]
+```
+
+```{r}
+install.packages('rje')
+library(rje)
+```
+
+```{r}
+dev <- rep(0, 66538)
+for (j in 1:66536){
+  dev[j] <-glm(disease~., family='binomial', data=gwas[,c(2, 2+j)])$deviance
+  printPercentage(j, 66538)
+}
+```
+Do manhattan plot. Red line is bonferroni correction, given by alpha/n.
+
+```{r}
+nulldeviance <- glm(disease~1, family='binomial', data=gwas)$deviance
+pval <- 1 - pchisq(nulldeviance - dev, 1)
+logpval <- rep(0, length(pval))
+for (i in 1:length(logpval)){
+  if (pval[i] == 0){
+    logpval[i] = 0
+  } else {
+    logpval[i] = -log10(pval[i])
+  }
+}
+barplot(logpval)
+abline(h=-log10(0.05/66536), col='red', lty=3)
+colnames(gwas)[order(pval)[1:6]+2]
+```
+
+```{r}
+X<-data.matrix(gwas[,-c(1,2)])
+Y<-gwas$disease
+
+gwas.lasso <- glmnet(X,Y,family='binomial', alpha=1)
+plot(gwas.lasso, xlab=TRUE, xvar="dev")
+```
+
+Now tune param using 10-fold X-val
+
+```{r}
+set.seed(2018)
+gwas.cvlasso <- cv.glmnet(X,Y, family='binomial', alpha=1, lambda=gwas.lasso$lambda,nfolds=10)
+plot(gwas.cvlasso)
+```
+
+```{r}
+gwas.cvlasso$lambda.min
+ind <- gwas.lasso$lambda == gwas.cvlasso$lambda.min
+round(gwas.lasso$a0[ind], 3)
+betahat<-round(gwas.lasso$beta[,ind], 3)
+betahat[betahat!=0
+```
+
+```{r}
+?glmnet
+
+```
+

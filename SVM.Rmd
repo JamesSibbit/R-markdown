@@ -1,0 +1,167 @@
+---
+title: "Prac 7"
+output: html_notebook
+---
+
+```{r}
+install.packages("e1071")
+library(e1071)
+```
+
+```{r}
+library(MASS)
+n <- 100
+set.seed(2018)
+x <- rbind(mvrnorm(n/2, c(-2,-2), diag(2)), mvrnorm(n/2, c(2,2), diag(2)))
+y <- as.factor(rep(c(1,2), each=n/2))
+dat <- data.frame(x1 = x[,1], x2= x[,2], y)
+with(dat, plot(x2, x1, pch=18, col=y, asp=1))
+```
+```{r}
+head(x)
+head(dat)
+tail(dat)
+```
+
+Want to compute SVM for above data.
+
+```{r}
+svm1 <- svm(y~x1+x2, data = dat, kernel = "linear", cost = 1000)
+```
+
+```{r}
+summary(svm1)
+x[svm1$index,]
+plot(svm1, dat)
+```
+
+Now perform with new data
+
+```{r}
+xnew <- rbind(mvrnorm(n/2, c(-2,-2), diag(2)), mvrnorm(n/2, c(2,2), diag(2)))
+ynew <- as.factor(rep(c(1,2), each=n/2))
+ypred <- predict(svm1, xnew)
+table(ypred, ynew)
+sum(ynew != ypred)/n
+```
+
+Now consider case where variance is large, so no separating hyperplane exists.
+
+```{r}
+set.seed(2018)
+x <- rbind(mvrnorm(n/2, c(-2,-2), 3*diag(2)), mvrnorm(n/2, c(2,2), 3*diag(2)))
+y <- as.factor(rep(c(1,2), each=n/2))
+dat <- data.frame(x1 = x[,1], x2= x[,2], y)
+with(dat, plot(x2, x1, pch=18, col=y, asp=1))
+svm2 <- svm(y~x1+x2, data = dat, kernel = "linear", cost = 1000000000000)
+summary(svm2)
+x[svm2$index,]
+plot(svm2, dat)
+xnew <- rbind(mvrnorm(n/2, c(-2,-2), 3*diag(2)), mvrnorm(n/2, c(2,2), 3*diag(2)))
+ynew <- as.factor(rep(c(1,2), each=n/2))
+ypred <- predict(svm2, xnew)
+table(ypred, ynew)
+sum(ynew != ypred)/n
+```
+
+Can see need much more support vectors here. Cost -> /infty, number of support vectors -> optimal number of support vectors.
+
+-------------------------
+
+Kernel SVM
+
+```{r}
+for(i in seq(1, 1000, by = 100)){
+  svm3 <- svm(y~x1+x2, data=dat, kernel = "radial", gamma = 1, cost = i)
+  plot(svm3, dat)
+  ypred <- predict(svm3, xnew)
+  print(sum(ynew != ypred)/n)
+}
+```
+Cost increases -> regions get more defined (but pred error also increases?)
+
+```{r}
+for(i in seq(1, 100, by=10)){
+  svm3 <- svm(y~x1+x2, data=dat, kernel = "radial", gamma = i, cost = 1000)
+  plot(svm3, dat)
+  ypred <- predict(svm3, xnew)
+  print(sum(ynew != ypred)/n)
+}
+```
+Same for gamma.
+Both cases -> leads to overfitting.
+
+Now use tuning to select optimal params.
+
+```{r}
+tune.out <- tune(svm, y~x1+x2, data=dat, kernel="radial",
+ranges = list(cost=10^c((-3):3), gamma=10^c((-3):3)))
+summary(tune.out)
+```
+Fit and check pred error.
+
+```{r}
+svm3 <- svm(y~x1+x2, data=dat, kernel = "radial", gamma = 0.001, cost = 100)
+plot(svm3, dat)
+ypred <- predict(svm3, xnew)
+print(sum(ynew != ypred)/n)
+```
+
+MNIST SVM
+
+```{r}
+filePath <- "https://raw.githubusercontent.com/AJCoca/SLP19/master/"
+fieName <- "mnist.csv"
+mnist <- read.csv(paste0(filePath, fileName), header = TRUE)
+mnist$digit <- as.factor(mnist$digit)
+
+train <- mnist[1:4000,]
+identical <- apply(train, 2, function(v){all(v==v[1])})
+train <- train[,!identical] # remove redundant pixels
+test <- mnist[4001:6000,!identical]
+```
+
+
+```{r}
+mnist.svm1 <- svm(digit~., data = train, kernel = "linear")
+pred <- predict(mnist.svm1, test)
+table(test$digit, pred) # confusion matrix
+sum(test$digit != pred) / 2000 # test error
+# 0.095
+
+mnist.svm2 <- svm(digit~., data = train, kernel = "radial") # this can be slow
+pred <- predict(mnist.svm2, test)
+table(test$digit, pred) # confusion matrix
+sum(test$digit != pred) / 2000
+```
+
+Carry out SVM tuning to get optimal cost & gamma params.
+
+```{r}
+tune.out <- tune(svm, digit~., data=train, kernel="radial",
+ranges = list(cost=10^c((-3):3), gamma=10^c((-3):3)))
+summary(tune.out)
+```
+
+
+```{r}
+(1-pnorm((0.472/0.0676)))*2
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

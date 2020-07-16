@@ -1,0 +1,275 @@
+---
+title: "ARIMA Models"
+output: html_notebook
+---
+
+Plot white noise
+
+```{r}
+n <- 100
+time <- 1:n
+set.seed(2018)
+W <- rnorm(n, mean=0, sd = 0.2)
+plot(time, W, type="l", ylim=c(-1,1))
+```
+
+Estimate autocorr. Blue dashed lines are pointwise confidence intervals for autocorr, NOT dependent on h
+
+```{r}
+rho <- acf(W)
+rho$acf
+```
+
+AR(1) process
+
+```{r}
+phi <- 0.9; sigma <- 0.2
+set.seed(2018)
+W <-rnorm(n, mean=0, sd=sigma)
+Y <- rep(0, n)
+Y[1] <- W[1] # initialise
+for (t in 2:n) Y[t] <- phi * Y[t-1] + W[t]
+plot(time, Y, type="l", col="blue", ylim=c(-1,1))
+points(time, W, col="orange", type="l")
+legend("topleft", c("Y", "W"), col=c("blue","orange"), lty=1)
+acf(Y)
+```
+
+```{r}
+plot(arima.sim(list(order=c(1,0,0), ar=0.9), n=100, sd=0.2), ylab="Y")
+plot(arima.sim(list(order=c(1,0,0), ar=-0.9), n=100, sd=0.2), ylab="Y")
+```
+
+```{r}
+theta <- 0.9; sigma <- 0.2
+set.seed(2018)
+W <-rnorm(n, mean=0, sd=sigma)
+Y <- rep(0, n)
+Y[1] <- W[1]/(sqrt(1-phi^2)) # initialise at random, divide through for stationarity
+for (t in 2:n) Y[t] <- theta * W[t-1] + W[t]
+plot(time, Y, type="l", col="blue", ylim=c(-1,1))
+points(time, W, col="orange", type="l")
+legend("topleft", c("Y", "W"), col=c("blue","orange"), lty=1)
+acf(Y)
+```
+
+Use arima for MA
+
+```{r}
+acf(arima.sim(list(order=c(0,0,1), ma=0.9), n=100, sd=0.2))
+acf(arima.sim(list(order=c(0,0,1), ma=0.2), n=100, sd=0.2))
+```
+
+Now combine AR and MA into ARIMA
+
+```{r}
+set.seed(2018)
+Y <- arima.sim(list(order=c(2,0,1), ar=c(0.9, -0.3), ma=0.5), n=100, sd=0.2)
+plot(Y, type="l")
+acf(Y)
+```
+
+ARIMA Model with d=1 
+
+```{r}
+set.seed(2018)
+Y <- arima.sim(list(order=c(2,1,1), ar=c(0.9, -0.3), ma=0.5), n=100, sd=0.2)
+plot(Y, type="l")
+```
+
+Can revocer ARMA by taking difference (values are lagged by 1)
+
+```{r}
+Y <- diff(Y)
+plot(Y, type="l")
+acf(Y)
+```
+
+```{r}
+filePath <- "https://raw.githubusercontent.com/AJCoca/SLP19/master/"
+fileName <- "wait.txt"
+dat <- read.table(paste0(filePath, fileName), header=T)
+wait <- dat$wait
+```
+
+Plot time series
+
+```{r}
+time <- 1:length(wait)
+plot(time, wait, type="l")
+rho <- acf(wait)
+rho
+```
+
+Lags go up to 5 --> not an MA(1)
+
+```{r}
+wait.ts <- ts(wait)
+wait.ar <- arima(wait.ts, order=c(1,0,0))
+wait.ar
+```
+
+```{r}
+plot(wait.ar$residuals)
+acf(wait.ar$residuals)
+```
+
+Now fit MA
+
+```{r}
+wait.ma <- arima(wait.ts, order=c(0,0,5))
+wait.ma
+plot(wait.ma$residuals,type="l")
+acf(wait.ma$residuals)
+```
+
+```{r}
+filePath <- "https://raw.githubusercontent.com/AJCoca/SLP19/master/"
+fileName <- "calls.txt"
+calls_number <- read.table(paste0(filePath, fileName), header=T)
+head(calls_number)
+```
+
+```{r}
+?ts
+```
+
+
+```{r}
+calls_series<-ts(data=calls_number,start=c(7,1),frequency=4)
+plot(calls_series,xlab="hours")
+acf(calls_series)
+```
+
+```{r}
+install.packages("tseries")
+library(tseries)
+```
+
+Tests H0: stationary vs H1: non-stationary
+
+```{r}
+kpss.test(calls_series)
+```
+
+Use pacf to infer order of AR(p) model (so in this case --> suggests order at most 2)
+
+```{r}
+pacf(calls_series)
+```
+
+```{r}
+for (p in 0:2) for (q in 0:2){
+ cat("p = ", p, "q = ", q, "AIC = ",
+ AIC(arima(calls_series, order=c(p,0,q), include.mean=F)), "\n")
+} 
+```
+
+```{r}
+call.ts <- arima(calls_series, order=c(2,0,2), include.mean=FALSE)
+call.ts
+```
+
+```{r}
+install.packages("forecast")
+library(forecast)
+```
+
+Use auto arima to choose best ARIMA model based on AIC
+
+```{r}
+auto.arima(calls_series, ic="aic", seasonal = FALSE, trace=TRUE)
+```
+
+ARIMA gives Inf for ARIMA(2,0,2) as abs value of roots of AR & MA equations are close to 1.
+
+```{r}
+abs(polyroot(c(1,-coef(call.ts)[c("ar1", "ar2")])))
+abs(polyroot(c(1,coef(call.ts)[c("ma1", "ma2")])))
+```
+```{r}
+calls.arma <- arima(calls_series, order=c(1,0,1), include.mean=F)
+fc <- forecast(calls.arma, 48, level=95)
+plot(fc, shaded=F)
+```
+```{r}
+?forecast 
+```
+
+Stock prices
+
+```{r}
+library(quantmod)
+getSymbols("SLP", from="2010-01-01", to="2017-01-01")
+slp = SLP[,6]
+head(slp)
+plot(slp)
+```
+
+```{r}
+plot(log(slp))
+```
+
+Check whether log of series is stationary.
+
+```{r}
+diff_slp <- diff(log(slp)) 
+log_slp <- log(slp)
+kpss.test(log_slp)
+kpss.test(diff_slp)
+```
+
+```{r}
+plot(log_slp)
+plot(diff_slp)
+acf(diff_slp[-1])
+pacf(diff_slp[-1])
+```
+
+Use auto arima to select best ARIMA model.
+
+```{r}
+diff_ts <- ts(diff_slp)
+log_ts <- ts(log_slp)
+auto.arima(diff_ts, ic="aic")
+auto.arima(log_ts, ic="aic")
+```
+
+Want to take one step ahead forecasting and compare to actual return - ie backtest the model
+
+```{r}
+getSymbols("SLP", from="2010-01-01", to="2020-03-11")
+slp2 = SLP[,6]
+head(slp2)
+```
+
+```{r}
+diff_slp2 <- diff(log(slp2)) 
+log_slp2 <- log(slp2)
+kpss.test(log_slp2)
+kpss.test(diff_slp2)
+```
+
+```{r}
+X <- as.numeric(diff_slp2)
+n <- length(slp2)
+pred <- pred_low <- pred_high <- rep(0,n)
+test_start = 1764 # first day of 2017, as there are 250 business days
+for (t in test_start:n){
+# we use Arima(), which is a wrapper of arima() but allows us to include drift
+model <- Arima(X[1:(t-1)], order=c(0,1,1), include.drift=TRUE)
+tmp <- forecast(model, 1, level=95)
+pred[t] <- tmp$mean; pred_low[t] <- tmp$lower; pred_high[t] <- tmp$upper
+}
+```
+
+```{r}
+backtest <- data.frame(actual = X[test_start:n], pred = pred[test_start:n])
+backtest.lm <- lm(actual~pred, data=backtest)
+with(backtest, plot(pred, actual))
+summary(backtest.lm)
+abline(backtest.lm)
+````
+
+
+
