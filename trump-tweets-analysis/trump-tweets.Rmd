@@ -1,0 +1,212 @@
+---
+title: "Trump Tweets"
+output: html_notebook
+---
+
+```{r}
+library(lubridate)
+library(dplyr)
+library(tidyr)
+library(xts)
+library(tseries)
+library(forecast)
+library(zoo)
+```
+
+```{r}
+options(scipen=999)
+```
+
+In this notebook, we want to analyse whether Trump's tweets have a statistically significant effect on his approval ratings, and if they do, can we use the popularity of his tweets to predict his approval ratings?
+
+First, import csv data from Kaggle (stored on local machine).
+
+```{r}
+tweets <- read.csv('realdonaldtrump.csv', header=TRUE)
+approval <- read.csv('datasets_683990_1200219_trump-approval-ratings_approval_topline.csv', header=TRUE)
+head(tweets)
+head(approval)
+```
+
+Now, pull out favourites, approval %age estimate & disapproval %age estimate.
+
+```{r}
+tweets_date <- format(as.Date(tweets$date), "%m/%d/%Y")
+approval_date <- strftime(as.Date(approval$modeldate, format="%m/%d/%Y"), format="%m/%d/%Y")
+approval_df <- data.frame(approval_date, approval$approve_estimate)
+disapproval_df <- data.frame(approval_date, approval$disapprove_estimate)
+tweets_df <- data.frame(tweets_date, tweets$favorites)
+head(disapproval_df)
+tail(tweets_df)
+```
+
+Now we need to match these up by date. First, we need to take average of favourites & (dis)approval per day - use dplyr to group by date and take average.
+
+```{r}
+tweets_fav <- tweets_df %>%
+  group_by(tweets_date) %>%
+  mutate(mean_favorites = mean(tweets.favorites)) %>%
+  select(-tweets.favorites) %>%
+  distinct()
+
+approval_means <- approval_df %>%
+  group_by(approval_date) %>%
+  mutate(mean_approval  = mean(approval.approve_estimate)) %>%
+  select(-approval.approve_estimate) %>%
+  distinct()
+
+disapproval_means <- disapproval_df %>%
+  group_by(approval_date) %>%
+  mutate(mean_disapproval  = mean(approval.disapprove_estimate)) %>%
+  select(-approval.disapprove_estimate) %>%
+  distinct()
+
+approval_means_asc = approval_means[order(as.Date(approval_means$approval_date, format = "%m/%d/%Y")),]
+disapproval_means_asc = disapproval_means[order(as.Date(approval_means$approval_date, format = "%m/%d/%Y")),]
+
+head(tweets_fav)
+head(approval_means_asc)
+tail(disapproval_means_asc)
+```
+
+Match up starting dates.
+
+```{r}
+tweets_ts <- tweets_fav[which(tweets_fav$tweets_date == "01/23/2017"):which(tweets_fav$tweets_date == "05/29/2020"),]
+
+approve_ts <- approval_means_asc[which(approval_means_asc$approval_date == "01/23/2017"):which(approval_means_asc$approval_date == "05/29/2020"),]
+
+disapprove_ts <- disapproval_means_asc[which(disapproval_means_asc$approval_date == "01/23/2017"):which(disapproval_means_asc$approval_date == "05/29/2020"),]
+```
+
+Finally, merge into one dataframe.
+
+```{r}
+tweets_zoo <- zoo(tweets_ts)
+approve_zoo <- zoo(approve_ts)
+disapprove_zoo <- zoo(disapprove_ts)
+
+names(tweets_zoo) <- c('tweets_date', 'mean_favs')
+names(approve_zoo) <- c('app_date', 'mean_app')
+names(disapprove_zoo) <- c('disapp_date', 'mean_disapp')
+
+approve_zoo_date <- data.frame(approve_zoo[(approve_zoo$app_date %in% tweets_zoo$tweets_date),])
+disapprove_zoo_date <- data.frame(disapprove_zoo[(disapprove_zoo$disapp_date %in% tweets_zoo$tweets_date),])
+
+approve_zoo_date %>% drop_na()
+disapprove_zoo_date %>% drop_na()
+
+complete_df <- data.frame(merge(tweets_zoo, approve_zoo_date, disapprove_zoo_date))
+
+ts_complete <- complete_df %>%
+  select(-app_date) %>%
+  select(-disapp_date) %>%
+  rename(date = tweets_date) %>%
+  mutate(date = mdy(date)) %>%
+  mutate(mean_favs = as.numeric(as.character(mean_favs))) %>%
+  mutate(mean_app = as.numeric(as.character(mean_app))) %>%
+  mutate(mean_disapp = as.numeric(as.character(mean_disapp)))
+  
+```
+```{r}
+head(ts_complete)
+```
+
+Create time series objects.
+
+```{r}
+favourites_ts <- ts(ts_complete$mean_favs, start = 1, frequency = 1)
+approval_ts <- ts(ts_complete$mean_app, start = 1, frequency = 1)
+disapproval_ts <- ts(ts_complete$mean_disapp, start = 1, frequency = 1)
+```
+
+Plot and compare. First, approval ratings.
+
+```{r}
+plot(approval_ts, type="l", col = "green", ylim = c(35,60))
+lines(disapproval_ts, type="l", col="red")
+```
+
+Now, favourites against both (just the most recent 365 days).
+
+```{r}
+mar.default <- c(5,4,4,2) + 0.1
+par(mar = mar.default + c(0, 0, 0, 4)) 
+plot(favourites_ts[844:1209], type="l", col="blue", ylab = "Favourites")
+par(new = TRUE)
+plot(approval_ts[844:1209], type = "l", axes = FALSE, bty = "n", col="green", xlab = "", ylab = "")
+par(new = TRUE)
+plot(disapproval_ts[844:1209], type = "l", axes = FALSE, bty = "n", col="red", xlab = "", ylab = "")
+axis(side=4)
+mtext("Approval percentage", side=4, line = 3)
+legend("topleft", c("Favourites","Approval", "Disapproval"), lty = c(1,1), col=c("Blue", "Green", "Red"))
+```
+
+We see some possible correlation, but we need to go deeper.
+
+---------------------------------------
+
+Now we have our data nicely set up, it's time to do some analysis. First, carry out a simple regression between favourites and approval. First, check if there is any correlation. First, plot.
+
+```{r}
+plot(ts_complete$mean_favs, ts_complete$mean_app)
+```
+
+Seems like a pretty random spread - now check correlation.
+
+```{r}
+cor(ts_complete$mean_app, ts_complete$mean_favs, method = c("pearson"))
+```
+
+Slight positive correlation - now check disapproval.
+
+```{r}
+cor(ts_complete$mean_disapp, ts_complete$mean_favs, method = c("pearson"))
+```
+
+```{r}
+as.numeric(ts_complete$date)[1:5]
+```
+
+Negative correlation, as exppected. Now we regress approval & disapproval on favourites. Inlcude date as a predictor, as we expect a time trend (note, we subtract 17188 from date so that it starts at 1).
+
+```{r}
+app_lm <-lm(mean_app ~ mean_favs + as.numeric(I(date-17188)), data=ts_complete)
+disapp_lm <-lm(mean_disapp ~ mean_favs + as.numeric(I(date-17188)), data=ts_complete)
+summary(app_lm)
+summary(disapp_lm)
+```
+
+We see that all covariates are statistically significant in both models.
+
+----------------
+
+Now we have shown a relationship between favourites and approval/disapprocal, we want to use ARIMA models to predict twitter favourites, and use this to in turn predict approval ratings.
+
+First, check whether favourites are stationary.
+
+```{r}
+kpss.test(favourites_ts)
+```
+
+Significant evidence that this is NOT stationary at 1% level. So, try auto.arima - we expect some differencing to be necessary to give stationarity.
+
+```{r}
+auto.arima(favourites_ts, ic = "aic", seasonal = TRUE, trace = TRUE)
+```
+
+So, we can use an ARIMA(1,1,2) model to forecast this TS. Use forecast package to do so.
+
+```{r}
+arima_fav <- arima(favourites_ts, order = c(1,1,2), include.mean = T)
+fc <- forecast(arima_fav, level = 95)
+plot(fc, xlim = c(1200, 1220))
+```
+
+We can use this data, along with our linear model, to predict approval rating from tweet favourites.
+
+-----------------------------------
+
+
+
+
